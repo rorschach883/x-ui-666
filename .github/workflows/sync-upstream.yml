@@ -1,23 +1,44 @@
-name: Sync Upstream
+name: Upstream Sync (Delete-Safe)
+
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: '0 19 * * *'
+    # 每天北京时间早上 8:00 定时执行
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
   sync:
+    name: Sync with upstream
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Sync upstream
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      - name: Check if Upstream exists (防删库熔断检测)
+        id: check_upstream
+        env:
+          UPSTREAM_REPO: yonggekkk/x-ui-yg
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L "https://github.com/${UPSTREAM_REPO}")
+          echo "Upstream status code: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::warning::原作者仓库不存在或已删库 (HTTP $HTTP_STATUS)。为了保证代码安全，本次同步已自动终止！"
+            echo "upstream_alive=false" >> $GITHUB_OUTPUT
+          else
+            echo "upstream_alive=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Safe sync upstream changes
+        if: steps.check_upstream.outputs.upstream_alive == 'true'
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
         with:
           upstream_sync_repo: yonggekkk/x-ui-yg
           upstream_sync_branch: main
           target_sync_branch: main
-          # 开启强推功能，保证永远和原作者百分百同步
-          git_push_force: true
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          test_mode: false
